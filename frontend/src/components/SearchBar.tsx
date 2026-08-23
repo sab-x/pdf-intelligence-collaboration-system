@@ -3,7 +3,10 @@ import { Search, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 300;
+// Longer than a pure-text search would need. Every keystroke that gets
+// through here costs an embedding API call on the backend, so the debounce
+// is a cost control as much as a UX one.
+const DEBOUNCE_MS = 400;
 
 interface SearchBarProps {
   /** Fires with the debounced value — the parent drives the query from this. */
@@ -49,7 +52,7 @@ export function SearchBar({ onSearch, isSearching }: SearchBarProps) {
         onKeyDown={(event) => {
           if (event.key === "Escape") setValue("");
         }}
-        placeholder="Search by filename…"
+        placeholder="Search by name or meaning…"
         aria-label="Search documents"
         className={cn(
           "h-10 w-full rounded-lg border border-input bg-card pl-9 pr-9 text-sm",

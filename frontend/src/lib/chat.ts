@@ -30,7 +30,7 @@ import { getAccessToken, getGuestCredentials } from "@/lib/api";
  * Vite's dev proxy. On Vercel, VITE_STREAM_BASE_URL is set to the Render
  * origin so the stream skips the edge proxy entirely.
  */
-const STREAM_BASE = (import.meta.env.VITE_STREAM_BASE_URL as string | undefined) ?? "";
+const STREAM_BASE = import.meta.env.VITE_STREAM_BASE_URL ?? "";
 
 export interface Citation {
   chunk_id: string;

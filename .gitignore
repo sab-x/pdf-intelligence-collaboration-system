@@ -1,0 +1,45 @@
+# --- Secrets (never commit) ---
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+
+# --- Internal planning docs (local only, not part of the submission) ---
+docs/
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# --- Local uploads / scratch / debug dumps ---
+uploads/
+backend/conftest_dump.txt
+backend/migration_dump.txt
+backend/signup.json
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+npm-debug.log*

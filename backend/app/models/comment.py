@@ -40,10 +40,14 @@ class Comment(Base):
     author_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
-    # Phase 8 stub — no ForeignKey until guest_sessions exists. See migration
-    # 0003 for why the constraint is deferred rather than declared here.
+    # The constraint 0003 deferred, attached in 0004 once guest_sessions
+    # existed. CASCADE is forced rather than chosen: ck_comments_has_author
+    # requires one of the two author columns to be non-null, so SET NULL on
+    # a guest comment would violate it and abort the parent delete.
     guest_session_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("guest_sessions.id", ondelete="CASCADE"),
+        nullable=True,
     )
     author_label: Mapped[str] = mapped_column(Text, nullable=False)
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False)

@@ -10,7 +10,19 @@ from app.db.base import Base
 
 # Import every model module here so Base.metadata is populated for
 # autogenerate. Add to this list as models land in later phases.
-from app.models import document, refresh_token, user  # noqa: F401
+# `comment` was missing from Phase 7 through Phase 8 — autogenerate was
+# silently blind to it, which would have shown up as a spurious "drop the
+# comments table" the first time anyone ran --autogenerate.
+from app.models import (  # noqa: F401
+    chat,
+    comment,
+    document,
+    document_chunk,
+    guest_session,
+    refresh_token,
+    share_link,
+    user,
+)
 
 config = context.config
 

@@ -7,9 +7,11 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.chat import router as chat_router
 from app.api.v1.comments import router as comments_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.search import router as search_router
+from app.api.v1.shares import router as shares_router
 from app.core.config import settings
 from app.core.limiter import limiter
 
@@ -43,6 +45,8 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(comments_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
+app.include_router(shares_router, prefix="/api/v1")
+app.include_router(chat_router, prefix="/api/v1")
 
 
 @app.get("/health")

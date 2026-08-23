@@ -17,6 +17,10 @@ interface PanelContentProps {
   pageNumber: number;
   pageCount: number;
   onJumpToPage: (page: number) => void;
+  /** False for a view-only guest — hides the comment composer. */
+  canComment?: boolean;
+  /** Set on the share page so a guest's optimistic comment shows their name. */
+  guestDisplayName?: string;
 }
 
 /** Icon-led tab bar — the icon carries the identity, the label confirms it. */
@@ -78,14 +82,20 @@ export function DocumentPanel({
   pageNumber,
   pageCount,
   onJumpToPage,
+  canComment = true,
+  guestDisplayName,
 }: PanelContentProps) {
   const [tab, setTab] = useState<PanelTab>("comments");
 
   return (
     <>
       {/* --- >= 1280px: stacked, no tabs ------------------------------- */}
-      <aside className="hidden h-full min-h-0 flex-col gap-5 xl:flex">
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+      <aside className="hidden h-full min-h-0 flex-col gap-4 xl:flex">
+        {/* Comments gets 1 share, chat gets 2. An even split looked balanced
+            and read badly: comments is usually a short list or empty, while
+            chat is a growing transcript that has to be scrolled in a ~200px
+            window. Space should follow how much content each actually holds. */}
+        <section className="flex min-h-[11rem] flex-[1] flex-col overflow-hidden rounded-xl border border-border bg-card">
           <header className="flex items-center gap-2 border-b border-border px-5 py-3.5">
             <MessagesSquare className="size-4 text-muted-foreground" aria-hidden />
             <h2 className="meta">Comments</h2>
@@ -95,17 +105,23 @@ export function DocumentPanel({
               documentId={documentId}
               pageNumber={pageNumber}
               onJumpToPage={onJumpToPage}
+              canComment={canComment}
+              guestDisplayName={guestDisplayName}
             />
           </div>
         </section>
 
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+        <section className="flex min-h-[20rem] flex-[2] flex-col overflow-hidden rounded-xl border border-border bg-card">
           <header className="flex items-center gap-2 border-b border-border px-5 py-3.5">
             <Sparkles className="size-4 text-muted-foreground" aria-hidden />
             <h2 className="meta">Chat</h2>
           </header>
           <div className="min-h-0 flex-1 overflow-auto">
-            <ChatPanel onJumpToPage={onJumpToPage} pageCount={pageCount} />
+            <ChatPanel
+              documentId={documentId}
+              onJumpToPage={onJumpToPage}
+              pageCount={pageCount}
+            />
           </div>
         </section>
       </aside>
@@ -123,9 +139,15 @@ export function DocumentPanel({
               documentId={documentId}
               pageNumber={pageNumber}
               onJumpToPage={onJumpToPage}
+              canComment={canComment}
+              guestDisplayName={guestDisplayName}
             />
           ) : (
-            <ChatPanel onJumpToPage={onJumpToPage} pageCount={pageCount} />
+            <ChatPanel
+              documentId={documentId}
+              onJumpToPage={onJumpToPage}
+              pageCount={pageCount}
+            />
           )}
         </div>
       </aside>
@@ -141,6 +163,8 @@ export function MobilePanelSheet({
   pageNumber,
   pageCount,
   onJumpToPage,
+  canComment = true,
+  guestDisplayName,
 }: PanelContentProps & { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<PanelTab>("comments");
 
@@ -189,9 +213,15 @@ export function MobilePanelSheet({
               documentId={documentId}
               pageNumber={pageNumber}
               onJumpToPage={onJumpToPage}
+              canComment={canComment}
+              guestDisplayName={guestDisplayName}
             />
           ) : (
-            <ChatPanel onJumpToPage={onJumpToPage} pageCount={pageCount} />
+            <ChatPanel
+              documentId={documentId}
+              onJumpToPage={onJumpToPage}
+              pageCount={pageCount}
+            />
           )}
         </div>
       </div>

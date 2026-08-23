@@ -10,6 +10,92 @@ const API_BASE = "/api/v1";
 
 let accessToken: string | null = null;
 
+// ---------------------------------------------------------------------------
+// Guest credentials (share links) — PROJECT_PLAN.md §4.
+//
+// A guest JWT is a completely different credential from a user access token:
+// 24 hours, scoped to one document, and NO refresh cookie behind it. That
+// last point is what makes this more than a second variable. apiFetch's
+// silent-refresh-on-401 assumes a refresh cookie exists; for a guest it
+// would POST /auth/refresh, get 401 because there's no cookie, and bounce
+// them to /login — from a page they were never logged into and have no
+// account for. So when a guest token is present the refresh path is skipped
+// entirely and the 401 surfaces as "this link is no longer valid", which is
+// both true and actionable.
+//
+// sessionStorage, deliberately not a cookie: it dies with the tab and is
+// never sent automatically, so it can't be replayed cross-tab as a user
+// session. It's also per-tab, which means opening a second share link in a
+// new tab gets its own identity rather than overwriting the first.
+// ---------------------------------------------------------------------------
+
+const GUEST_STORAGE_KEY = "pdfintel.guest";
+
+export interface GuestCredentials {
+  token: string;
+  documentId: string;
+  displayName: string;
+  permission: "view" | "comment";
+  /**
+   * The share token this session was created from. Stored so a reload can
+   * tell whether the credential in this tab belongs to the link currently
+   * in the address bar — following a second, different share link must ask
+   * for a name again rather than silently reusing the first identity.
+   */
+  shareToken: string;
+}
+
+let guestCredentials: GuestCredentials | null = null;
+
+function readStoredGuest(): GuestCredentials | null {
+  // Wrapped because sessionStorage throws outright in some privacy modes
+  // rather than returning null, and a share page that white-screens is
+  // worse than one that just asks for a name again.
+  try {
+    const raw = sessionStorage.getItem(GUEST_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as GuestCredentials;
+    if (!parsed?.token || !parsed?.documentId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+guestCredentials = readStoredGuest();
+
+export function setGuestCredentials(credentials: GuestCredentials | null): void {
+  guestCredentials = credentials;
+  try {
+    if (credentials) {
+      sessionStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(credentials));
+    } else {
+      sessionStorage.removeItem(GUEST_STORAGE_KEY);
+    }
+  } catch {
+    // Storage unavailable — the in-memory copy still carries this tab's
+    // session, it just won't survive a reload.
+  }
+}
+
+export function getGuestCredentials(): GuestCredentials | null {
+  return guestCredentials;
+}
+
+/**
+ * Guest credentials for a specific document, or null.
+ *
+ * The document check matters: a stale entry from a previous share link must
+ * not be sent as the credential for a different document. The backend would
+ * reject it (require_document_access compares share_links.document_id), but
+ * failing here means the UI can ask for a name again instead of rendering a
+ * confusing 404.
+ */
+export function getGuestCredentialsFor(documentId: string): GuestCredentials | null {
+  const current = guestCredentials;
+  return current && current.documentId === documentId ? current : null;
+}
+
 export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
@@ -123,13 +209,27 @@ export async function apiFetch<T = unknown>(
 ): Promise<T> {
   const { body, skipAuthRetry, silentAuthCheck, headers, ...rest } = options;
 
+  // Guest tokens are scoped to one document and are rejected by /auth/*,
+  // which requires an "access"-kind token. Sending one there produces a 401
+  // that has nothing to do with the share link — and AuthProvider probes
+  // /auth/me on mount for EVERY route, share page included. Attaching the
+  // guest token to that probe made a plain page refresh look like a revoked
+  // link, clear the credential, and bounce an account-less visitor to
+  // /login. Auth routes therefore never carry it.
+  const isAuthRoute = path.startsWith("/auth/");
+  const guestToken = isAuthRoute ? null : (guestCredentials?.token ?? null);
+
   const doFetch = async (): Promise<Response> => {
     const requestHeaders = new Headers(headers);
     if (body !== undefined && !requestHeaders.has("Content-Type")) {
       requestHeaders.set("Content-Type", "application/json");
     }
-    if (accessToken) {
-      requestHeaders.set("Authorization", `Bearer ${accessToken}`);
+    // A guest token wins when present (and permitted on this path). Making
+    // the precedence explicit means a leftover access token in memory can't
+    // shadow the guest's credential.
+    const bearer = guestToken ?? accessToken;
+    if (bearer) {
+      requestHeaders.set("Authorization", `Bearer ${bearer}`);
     }
     return fetch(`${API_BASE}${path}`, {
       ...rest,
@@ -140,6 +240,23 @@ export async function apiFetch<T = unknown>(
   };
 
   let response = await doFetch();
+
+  // A guest has no refresh cookie, so there is nothing to silently refresh.
+  // Attempting it would 401 again and fire onAuthExpired, redirecting an
+  // account-less visitor to /login. Their 401 means one thing — the link was
+  // revoked, expired, or the 24h token ran out — so say that instead.
+  //
+  // Gated on guestToken, not guestCredentials: this must only fire when the
+  // guest token was actually the credential sent. A 401 from a route that
+  // never carried it says nothing about the share link's validity.
+  if (response.status === 401 && guestToken) {
+    setGuestCredentials(null);
+    throw new ApiError(
+      401,
+      "This share link is no longer valid. Ask the owner for a new one.",
+      null,
+    );
+  }
 
   if (response.status === 401 && !skipAuthRetry && path !== "/auth/refresh") {
     const outcome = await refreshAccessToken();
@@ -212,8 +329,12 @@ function sendMultipart<T>(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE}${path}`);
     xhr.withCredentials = true;
-    if (accessToken) {
-      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    // Same precedence as apiFetch. Guests can't upload — the route depends
+    // on require_user — but the header logic stays consistent rather than
+    // quietly diverging between the two clients.
+    const bearer = guestCredentials?.token ?? accessToken;
+    if (bearer) {
+      xhr.setRequestHeader("Authorization", `Bearer ${bearer}`);
     }
 
     if (onProgress) {

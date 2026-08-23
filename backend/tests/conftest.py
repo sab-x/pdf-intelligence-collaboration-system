@@ -8,10 +8,12 @@ own throwaway Postgres database; otherwise it defaults to a local
 up bound to the test DB automatically — no dependency override needed.
 
 Schema is created directly from the ORM metadata (vector/pg_trgm/citext
-extensions + the users/refresh_tokens/documents tables) rather than by
-running the Alembic migration. As of Phase 3, the documents table's
-summary_embedding column and filename trigram index mean vector and
-pg_trgm are both required here too, not just citext.
+extensions + every table) rather than by running the Alembic migration. As
+of Phase 3, the documents table's summary_embedding column and filename
+trigram index mean vector and pg_trgm are both required here too, not just
+citext. Phase 9's document_chunks adds an HNSW index and a generated
+tsvector column, so the test database needs a pgvector new enough for HNSW
+(>= 0.5) — the same requirement as production.
 """
 import os
 
@@ -37,7 +39,16 @@ from app.core.limiter import limiter  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.db.session import engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import comment, document, refresh_token, user  # noqa: E402,F401
+from app.models import (  # noqa: E402,F401
+    chat,
+    comment,
+    document,
+    document_chunk,
+    guest_session,
+    refresh_token,
+    share_link,
+    user,
+)
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -57,8 +68,16 @@ async def _prepare_schema() -> AsyncIterator[None]:
 async def _clean_tables() -> AsyncIterator[None]:
     yield
     async with engine.begin() as conn:
+        # Every table any test writes to. Missing one here doesn't fail the
+        # test that created the row — it fails some unrelated later test
+        # with a duplicate-key or leftover-state error that points nowhere
+        # near the cause, so this list has to stay in step with the models.
         await conn.execute(
-            text("TRUNCATE TABLE comments, refresh_tokens, users, documents CASCADE")
+            text(
+                "TRUNCATE TABLE chat_messages, chat_sessions, document_chunks, "
+                "comments, guest_sessions, share_links, refresh_tokens, "
+                "users, documents CASCADE"
+            )
         )
 
 

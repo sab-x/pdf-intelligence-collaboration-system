@@ -21,12 +21,26 @@ interface CommentsPanelProps {
   documentId: string;
   pageNumber: number;
   onJumpToPage?: (page: number) => void;
+  /**
+   * False for a view-only guest. The server is still the authority — POST
+   * returns 403 either way — but showing a composer that always fails is a
+   * worse answer than not showing one.
+   */
+  canComment?: boolean;
+  /**
+   * Set on the share page. Guests have no `user`, so without this the
+   * optimistic insert would label their comment "You" and then flip to
+   * their real name on refetch.
+   */
+  guestDisplayName?: string;
 }
 
 export function CommentsPanel({
   documentId,
   pageNumber,
   onJumpToPage,
+  canComment = true,
+  guestDisplayName,
 }: CommentsPanelProps) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -54,12 +68,14 @@ export function CommentsPanel({
       const optimistic: Comment = {
         id: `optimistic-${crypto.randomUUID()}`,
         parent_id: payload.parent_id ?? null,
-        author_label: user?.name ?? "You",
+        author_label: guestDisplayName ?? user?.name ?? "You",
         body_markdown: payload.body_markdown,
         page_number: payload.page_number ?? null,
         created_at: new Date().toISOString(),
         is_deleted: false,
-        is_document_owner: true,
+        // A guest is never the document owner, so don't flash the owner
+        // treatment on their comment for the half-second before refetch.
+        is_document_owner: guestDisplayName === undefined,
         is_mine: true,
         can_delete: true,
         replies: [],
@@ -199,18 +215,26 @@ export function CommentsPanel({
         )}
       </div>
 
-      <div className="border-t border-border p-4">
-        <CommentComposer
-          pageNumber={pageNumber}
-          isSubmitting={post.isPending && replyingTo === null}
-          onSubmit={(body) => {
-            setReplyingTo(null);
-            // Anchor to whatever page the reader is on — the panel already
-            // shows this in the composer chip so it's never a surprise.
-            post.mutate({ body_markdown: body, page_number: pageNumber });
-          }}
-        />
-      </div>
+      {canComment ? (
+        <div className="border-t border-border p-4">
+          <CommentComposer
+            pageNumber={pageNumber}
+            isSubmitting={post.isPending && replyingTo === null}
+            onSubmit={(body) => {
+              setReplyingTo(null);
+              // Anchor to whatever page the reader is on — the panel already
+              // shows this in the composer chip so it's never a surprise.
+              post.mutate({ body_markdown: body, page_number: pageNumber });
+            }}
+          />
+        </div>
+      ) : (
+        <div className="border-t border-border px-4 py-3">
+          <p className="text-xs text-muted-foreground">
+            You have view-only access to this document.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

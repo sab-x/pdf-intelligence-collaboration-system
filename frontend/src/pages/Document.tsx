@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, PanelBottom } from "lucide-react";
+import { AlertTriangle, ArrowLeft, PanelBottom, Share2 } from "lucide-react";
 
+import { ShareDialog } from "@/components/ShareDialog";
 import { DocumentPanel, MobilePanelSheet } from "@/components/viewer/DocumentPanel";
 import { PdfViewer, type PdfViewerHandle } from "@/components/viewer/PdfViewer";
 import { SummaryAbstract } from "@/components/viewer/SummaryAbstract";
@@ -22,6 +23,7 @@ export default function DocumentPage() {
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const document = useQuery({
     queryKey: [...documentKeys.all, "detail", id],
@@ -98,6 +100,13 @@ export default function DocumentPage() {
           {doc.page_count !== null && ` · ${doc.page_count} pages`}
         </span>
 
+        <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+          <Share2 className="size-4" aria-hidden />
+          {/* Label hidden on the narrowest screens; the icon carries it and
+              the aria-label keeps it announced. */}
+          <span className="sr-only sm:not-sr-only">Share</span>
+        </Button>
+
         {/* Mobile entry point to the bottom sheet. */}
         <Button
           variant="outline"
@@ -110,10 +119,10 @@ export default function DocumentPage() {
         </Button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-hidden px-5 py-5 md:px-8 md:py-6 2xl:px-10 2xl:py-8">
-        <div className="mx-auto flex h-full min-h-0 max-w-[110rem] flex-col gap-5 md:flex-row md:gap-6 2xl:gap-8">
+      <div className="min-h-0 flex-1 overflow-hidden px-4 py-4 md:px-6 md:py-5 2xl:px-8 2xl:py-6">
+        <div className="mx-auto flex h-full min-h-0 max-w-[110rem] flex-col gap-4 md:flex-row md:gap-5 2xl:gap-6">
           {/* ---- Viewer column ---- */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-5">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
             <SummaryAbstract document={doc} />
 
             <div className="min-h-0 flex-1">
@@ -147,7 +156,7 @@ export default function DocumentPage() {
           </div>
 
           {/* ---- Panel column: 400px at md, wider at 2xl ---- */}
-          <div className="min-h-0 md:w-[22rem] lg:w-[25rem] 2xl:w-[28rem]">
+          <div className="min-h-0 md:w-[21rem] lg:w-[24rem] xl:w-[26rem] 2xl:w-[30rem]">
             <DocumentPanel
               documentId={doc.id}
               pageNumber={page}
@@ -165,6 +174,13 @@ export default function DocumentPage() {
         pageNumber={page}
         pageCount={pageCount}
         onJumpToPage={jumpToPage}
+      />
+
+      <ShareDialog
+        documentId={doc.id}
+        filename={doc.filename}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
       />
     </div>
   );

@@ -11,16 +11,26 @@ Two rules this file exists to enforce:
     the whole run is wrapped and any failure is written back as
     status='failed' with a message a human can act on.
 
-Chunking, embeddings, and summary_embedding (§5 steps e-g) are Phase 9.
+Chunking and embeddings (§5 steps e-g) degrade rather than fail: if Gemini
+can't be reached, the chunks are still written (searchable by full text) and
+the document still reaches 'ready'. Only the vector half of retrieval is
+lost, and it can be repaired by re-uploading. Failing an entire document
+because one API call timed out would discard a good summary too.
 """
 import logging
 import uuid
 
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.session import async_session_maker
 from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
 from app.services.ai import summarize_document
+from app.services.chunking import chunk_pages
+from app.services.embeddings import embed_chunks
 from app.services.pdf import extract_pages
 from app.services.storage import download_pdf
 
@@ -100,17 +110,97 @@ async def _run(document_id: uuid.UUID) -> None:
         document.doc_type = summary.doc_type
         document.key_points = summary.key_points
 
-        # h. Ready. (e-g — chunk, embed, embed summary — arrive in Phase 9.)
+        # e-g. Chunk, embed, index. Never fatal — see the module docstring.
+        embedded_count = await _index_chunks(db, document, pages, summary_degraded=summary.degraded)
+
+        # h. Ready.
         document.status = "ready"
         document.error_message = None
         await db.commit()
 
         logger.info(
-            "ingest: %s ready (%d pages, %d chars)",
+            "ingest: %s ready (%d pages, %d chars, %d embedded chunks)",
             document_id,
             len(pages),
             extracted_chars,
+            embedded_count,
         )
+
+
+async def _index_chunks(
+    db: AsyncSession,
+    document: Document,
+    pages: list[str],
+    *,
+    summary_degraded: bool,
+) -> int:
+    """Chunk the document, embed the chunks, and store both. Returns the
+    number of chunks that got a vector.
+
+    Never raises: every failure path here leaves the document usable.
+    """
+    # Idempotent re-ingest. Without this, uploading the same document twice
+    # would collide on uq_document_chunks_document_id_chunk_index, and a
+    # partial rewrite would leave stale chunks that retrieval would happily
+    # return alongside the new ones.
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+
+    chunks = chunk_pages(
+        pages,
+        target_tokens=settings.CHUNK_TARGET_TOKENS,
+        overlap_tokens=settings.CHUNK_OVERLAP_TOKENS,
+    )
+    if not chunks:
+        logger.warning("ingest: %s produced no chunks", document.id)
+        return 0
+
+    vectors = await embed_chunks([chunk.content for chunk in chunks])
+
+    embedded_count = 0
+    for chunk, vector in zip(chunks, vectors, strict=True):
+        # strict=True is load-bearing: embed_chunks promises positional
+        # alignment, and a length mismatch would attach chunk N's vector to
+        # chunk N+1 — wrong answers with confident citations, the worst
+        # possible failure mode for this feature. Fail loudly instead.
+        if vector is not None:
+            embedded_count += 1
+        db.add(
+            DocumentChunk(
+                document_id=document.id,
+                chunk_index=chunk.index,
+                content=chunk.content,
+                page_start=chunk.page_start,
+                page_end=chunk.page_end,
+                token_estimate=chunk.token_estimate,
+                embedding=vector,
+            )
+        )
+
+    if embedded_count < len(chunks):
+        logger.warning(
+            "ingest: %s embedded %d/%d chunks — vector retrieval will be partial, "
+            "full-text still covers the rest",
+            document.id,
+            embedded_count,
+            len(chunks),
+        )
+
+    # g. Summary embedding, for semantic dashboard search (§8).
+    #
+    # embed_chunks, NOT embed_query: the summary is indexed content that
+    # search queries are compared AGAINST, so it must use the same
+    # RETRIEVAL_DOCUMENT projection as the chunks. Embedding it as a query
+    # would put it in the wrong half of the model's asymmetric space and
+    # quietly cost recall on every semantic search.
+    #
+    # Skipped when the summary is the degraded fallback text: embedding
+    # "We couldn't summarise this document" would make it a weak match for
+    # unrelated queries.
+    if not summary_degraded and document.summary:
+        summary_vectors = await embed_chunks([document.summary])
+        document.summary_embedding = summary_vectors[0] if summary_vectors else None
+
+    return embedded_count
 
 
 async def _mark_failed(document_id: uuid.UUID, message: str) -> None:

@@ -6,12 +6,19 @@ truncated — silent truncation means two different passwords that agree on
 their first 72 bytes hash identically, which is a correctness/security bug
 disguised as a convenience.
 
-JWT_SECRET / JWT_ALGORITHM / ACCESS_TOKEN_MINUTES / REFRESH_TOKEN_DAYS are
-always read from settings — never hardcoded here.
+JWT_SECRET / JWT_ALGORITHM / ACCESS_TOKEN_MINUTES / REFRESH_TOKEN_DAYS /
+GUEST_TOKEN_HOURS are always read from settings — never hardcoded here.
+
+Three token kinds, and decode_token enforces which one a caller will accept.
+That enforcement is load-bearing: a guest token and a user access token are
+both signed with the same secret, so without the `kind` check a guest JWT
+presented to a user-only route would verify and be treated as a user. The
+kind check is the only thing standing between those two, so nothing in this
+module should ever be made lenient about it.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any, Literal
 
 import bcrypt
 import jwt
@@ -20,7 +27,7 @@ from app.core.config import settings
 
 BCRYPT_MAX_BYTES = 72
 
-TokenKind = Literal["access", "refresh"]
+TokenKind = Literal["access", "refresh", "guest"]
 
 
 class PasswordTooLongError(ValueError):
@@ -54,16 +61,21 @@ def _create_token(
     kind: TokenKind,
     expires_delta: timedelta,
     jti: str | None = None,
+    extra_claims: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     jti = jti or str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-    payload = {
+    payload: dict[str, Any] = {
         "sub": str(subject),
         "kind": kind,
         "jti": jti,
         "iat": now,
         "exp": now + expires_delta,
     }
+    if extra_claims:
+        # Merged after the reserved claims, but the caller is trusted code —
+        # nothing here comes from a request body.
+        payload.update(extra_claims)
     token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return token, jti
 
@@ -84,6 +96,40 @@ def create_refresh_token(user_id: uuid.UUID, jti: str | None = None) -> tuple[st
         expires_delta=timedelta(days=settings.REFRESH_TOKEN_DAYS),
         jti=jti,
     )
+
+
+def create_guest_token(
+    *,
+    guest_session_id: uuid.UUID,
+    share_link_id: uuid.UUID,
+    document_id: uuid.UUID,
+) -> str:
+    """Mint a guest JWT scoped to exactly one document — PROJECT_PLAN.md §4.
+
+    Claims: kind="guest", sub/sid = guest_session_id, slid = share_link_id,
+    doc = document_id.
+
+    `doc` is carried for debuggability and as a cheap first filter, but it is
+    NOT the authorization decision. require_document_access re-reads the
+    share link from the database on every request, because a token is a
+    frozen snapshot and revocation has to take effect immediately — a link
+    revoked one second ago must not keep working for the remaining 24 hours
+    of a token's life. The database is the authority; the claim is a hint.
+
+    Deliberately NOT stored in a cookie by the frontend (sessionStorage
+    instead), so it can never be replayed cross-tab as a user session.
+    """
+    token, _ = _create_token(
+        subject=guest_session_id,
+        kind="guest",
+        expires_delta=timedelta(hours=settings.GUEST_TOKEN_HOURS),
+        extra_claims={
+            "sid": str(guest_session_id),
+            "slid": str(share_link_id),
+            "doc": str(document_id),
+        },
+    )
+    return token
 
 
 def decode_token(token: str, *, expected_kind: TokenKind) -> dict:

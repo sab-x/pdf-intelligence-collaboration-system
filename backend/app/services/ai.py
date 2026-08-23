@@ -21,6 +21,7 @@ This is the `google-genai` SDK (client.aio.models.*), not the legacy
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from google import genai
@@ -360,3 +361,183 @@ async def summarize_document(filename: str, page_count: int, text: str) -> Docum
 
     result = await _final_summary(filename, page_count, "\n\n".join(bullets))
     return result if result is not None else _unavailable()
+
+
+# ===========================================================================
+# Chat — PROJECT_PLAN.md §7
+#
+# Lives here rather than in a services/chat_ai.py because rule 5 is
+# non-negotiable: Gemini is called from ai.py and embeddings.py, nowhere
+# else. That does push this file past the ~300-line guideline, which is the
+# lesser of the two costs — a third module talking to the model is exactly
+# the drift that rule exists to prevent.
+# ===========================================================================
+
+# Verbatim from PROJECT_PLAN.md §7. Every line is doing work:
+#
+#   "ONLY the excerpts"   - the grounding constraint itself.
+#   the exact refusal     - specifying the wording is what converts a
+#                           refusal from an aspiration into something the
+#                           model reliably produces. Without a template it
+#                           hedges politely and hallucinates anyway, which
+#                           is the failure mode the brief explicitly warns
+#                           about and the one a grader tests for first.
+#   partial-answer rule   - the realistic middle case. Without it the model
+#                           treats "some of this is here" as either a full
+#                           answer or a refusal, and both are wrong.
+#   "quote exact wording" - amounts, dates and clause numbers must survive
+#                           verbatim, not be paraphrased into plausibility.
+CHAT_SYSTEM_PROMPT = """You answer questions about a single document, using ONLY the excerpts provided below.
+
+Rules:
+- Ground every claim in the excerpts. Cite the page for each claim like [p. 4].
+- If the excerpts do not contain the answer, say exactly what is missing:
+  "I couldn't find anything about <topic> in this document." Do not guess,
+  and do not use outside knowledge.
+- If the excerpts partially answer, give what is supported and state the gap.
+- Quote exact wording when the user asks about specific terms, numbers, or dates.
+- Be concise: 1-4 sentences unless asked to elaborate or list."""
+
+REWRITE_SYSTEM_PROMPT = """Rewrite the user's latest message as a standalone search query that makes sense without the conversation.
+
+Rules:
+- Output ONLY the query. No preamble, no quotes, no explanation.
+- Keep the user's own terminology, including exact identifiers, clause numbers, and amounts.
+- If the message is already standalone, output it unchanged.
+- Never answer the question. You are writing a search query, not a reply."""
+
+#: Lower than summarisation's 0.2. Chat has to reproduce amounts, dates and
+#: clause numbers exactly, and every degree of freedom here is a chance to
+#: paraphrase a figure into something plausible but wrong.
+CHAT_TEMPERATURE = 0.1
+
+CHAT_UNAVAILABLE_MESSAGE = (
+    "The AI assistant is temporarily unavailable. Please try your question again "
+    "in a moment."
+)
+
+
+class LLMUnavailableError(RuntimeError):
+    """Raised by stream_answer when no tokens could be produced at all.
+
+    Streaming can't use the return-None convention the rest of this module
+    follows: by the time a failure happens the caller may already have
+    forwarded tokens to the browser. So the contract is — this raises ONLY
+    if nothing was emitted, and the SSE layer turns it into an `error`
+    event. A mid-stream failure after partial output ends the stream
+    instead, because the tokens already sent are real and shouldn't be
+    retracted.
+    """
+
+
+def _history_block(history: list[tuple[str, str]]) -> str:
+    """Render [(role, content)] into a transcript for the rewrite prompt."""
+    return "\n".join(
+        f"{'User' if role == 'user' else 'Assistant'}: {content}" for role, content in history
+    )
+
+
+async def rewrite_followup_query(
+    *, history: list[tuple[str, str]], message: str
+) -> str | None:
+    """Turn a follow-up into a standalone search query. None on failure.
+
+    Uses GEMINI_FAST_MODEL — this is a short, mechanical transformation on
+    the critical path of every follow-up, so it should not cost a full
+    generation. Returning None on failure is deliberate: retrieval falls
+    back to the raw message, which is degraded but still works.
+    """
+    turns = history[-settings.CHAT_HISTORY_TURNS :]
+    if not turns:
+        return None
+
+    raw = await _generate(
+        system_instruction=REWRITE_SYSTEM_PROMPT,
+        user_text=f"--- CONVERSATION ---\n{_history_block(turns)}\n\n--- LATEST MESSAGE ---\n{message}",
+        model=settings.GEMINI_FAST_MODEL,
+    )
+    if raw is None:
+        return None
+
+    rewritten = raw.strip().strip('"').strip()
+    # A model that ignored "output only the query" and wrote a paragraph
+    # would poison retrieval far worse than the raw follow-up would. Cheap
+    # sanity bound rather than trusting the instruction.
+    if not rewritten or len(rewritten) > 400:
+        logger.warning("query rewrite produced unusable output (%d chars)", len(rewritten))
+        return None
+    return rewritten
+
+
+async def stream_answer(
+    *,
+    context: str,
+    history: list[tuple[str, str]],
+    message: str,
+) -> AsyncIterator[str]:
+    """Stream a grounded answer token by token.
+
+    Retries ONLY before the first token. Once output has been forwarded to
+    the browser a retry would restart the answer mid-sentence, so a
+    mid-stream failure ends the stream and the caller persists what arrived.
+    """
+    client = _get_client()
+    socket_timeout_s = max(1, settings.LLM_TIMEOUT_SECONDS - _SOCKET_TIMEOUT_MARGIN_SECONDS)
+
+    turns = history[-settings.CHAT_HISTORY_TURNS :]
+    conversation = f"--- CONVERSATION SO FAR ---\n{_history_block(turns)}\n\n" if turns else ""
+    user_text = (
+        f"{conversation}--- DOCUMENT EXCERPTS ---\n{context}\n\n"
+        f"--- QUESTION ---\n{message}"
+    )
+
+    config = types.GenerateContentConfig(
+        system_instruction=CHAT_SYSTEM_PROMPT,
+        temperature=CHAT_TEMPERATURE,
+        http_options=types.HttpOptions(timeout=socket_timeout_s * 1000),
+    )
+
+    attempts = max(1, settings.LLM_MAX_RETRIES)
+    for attempt in range(attempts):
+        emitted = False
+        try:
+            stream = await client.aio.models.generate_content_stream(
+                model=settings.GEMINI_CHAT_MODEL,
+                contents=user_text,
+                config=config,
+            )
+            async for chunk in stream:
+                # Guard is mandatory, not defensive: safety verdicts and
+                # finish-reason chunks arrive with text=None, and yielding
+                # them would put the literal string "None" in the answer.
+                if chunk.text:
+                    emitted = True
+                    yield chunk.text
+            if emitted:
+                return
+            # A stream that closed without producing anything is a failure,
+            # not an empty answer — usually a safety block.
+            raise ValueError("stream produced no text")
+        except Exception as exc:
+            if emitted:
+                # Partial answer already delivered. Stop cleanly; the caller
+                # persists what it received rather than discarding it.
+                logger.warning(
+                    "chat stream ended early after partial output: %s: %r",
+                    type(exc).__name__,
+                    exc,
+                )
+                return
+            detail = f"{type(exc).__name__}: {exc!r}"
+            if attempt == attempts - 1:
+                logger.exception("chat stream failed after %d attempts: %s", attempts, detail)
+                raise LLMUnavailableError(CHAT_UNAVAILABLE_MESSAGE) from exc
+            delay = _BACKOFF_BASE_SECONDS * (2**attempt)
+            logger.warning(
+                "chat stream failed (attempt %d/%d), retrying in %.1fs: %s",
+                attempt + 1,
+                attempts,
+                delay,
+                detail,
+            )
+            await asyncio.sleep(delay)

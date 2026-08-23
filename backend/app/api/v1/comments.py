@@ -17,7 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import Access, Principal, require_document_access, resolve_principal
+from app.core.deps import (
+    Access,
+    Principal,
+    require_document_access,
+    resolve_access,
+    resolve_principal,
+)
 from app.db.session import get_db
 from app.models.comment import Comment
 from app.models.document import Document
@@ -39,10 +45,24 @@ def _to_response(
     replies: list[CommentResponse],
 ) -> CommentResponse:
     is_deleted = comment.deleted_at is not None
-    is_mine = (
-        principal.user_id is not None and comment.author_user_id == principal.user_id
+    # Two principal kinds, two identity columns. A comment carries exactly
+    # one of them (ck_comments_has_author), so a guest can never match a
+    # user's comment or vice versa.
+    if principal.kind == "guest":
+        is_mine = (
+            principal.guest_session_id is not None
+            and comment.guest_session_id == principal.guest_session_id
+        )
+    else:
+        is_mine = (
+            principal.user_id is not None
+            and comment.author_user_id == principal.user_id
+        )
+    # A guest is never the document owner. Spelled out rather than relying
+    # on None != UUID, so the intent survives a future refactor.
+    caller_owns_document = (
+        principal.user_id is not None and principal.user_id == document_owner_id
     )
-    caller_owns_document = principal.user_id == document_owner_id
 
     return CommentResponse(
         id=comment.id,
@@ -154,23 +174,38 @@ async def create_comment(
                 status.HTTP_400_BAD_REQUEST, "That comment has been deleted."
             )
 
-    # Guest authorship (guest_session_id + the guest's display name) lands in
-    # Phase 8; until then require_document_access only ever grants access to
-    # a signed-in user, so author_user_id is always present here.
-    if principal.user_id is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+    # Exactly one author column gets populated, matching
+    # ck_comments_has_author. Permission is already settled by
+    # require_document_access(Access.COMMENT) above — a view-only guest was
+    # refused with 403 before reaching this line, so there is no permission
+    # decision left to make here, only an identity one.
+    author_user_id: uuid.UUID | None = None
+    guest_session_id: uuid.UUID | None = None
 
-    author = await db.get(User, principal.user_id)
-    if author is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+    if principal.kind == "guest":
+        if principal.guest_session_id is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+        guest_session_id = principal.guest_session_id
+        author_label = principal.display_name
+    else:
+        if principal.user_id is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+        author = await db.get(User, principal.user_id)
+        if author is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+        author_user_id = principal.user_id
+        author_label = author.name
 
     comment = Comment(
         document_id=document.id,
         parent_id=body.parent_id,
-        author_user_id=principal.user_id,
-        # Denormalised at write time: the label should reflect who posted it,
-        # even if the account is renamed later.
-        author_label=author.name,
+        author_user_id=author_user_id,
+        guest_session_id=guest_session_id,
+        # Denormalised at write time: the label should reflect who posted it
+        # even if the account is renamed later — and for a guest it has to
+        # outlive the 24-hour token entirely, since nothing can resolve the
+        # name once the session is unreachable.
+        author_label=author_label,
         body_markdown=body.body_markdown,
         page_number=body.page_number,
     )
@@ -196,8 +231,13 @@ async def delete_comment(
 
     This route can't use require_document_access — it's addressed by comment
     id, so there's no {document_id} in the path for that dependency to bind.
-    The document is loaded here and the same fail-closed rule applies: every
-    refusal is a 404, so nobody learns a comment exists that they can't touch.
+    It calls resolve_access directly instead of re-deriving the rule, which
+    is what stops a guest whose link was revoked from still deleting their
+    old comments: the JWT stays cryptographically valid for its full 24
+    hours, so authorship alone is not enough to authorise a write.
+
+    Every refusal is a 404, so nobody learns a comment exists that they
+    can't touch.
     """
     comment = await db.get(Comment, comment_id)
     if comment is None:
@@ -207,10 +247,24 @@ async def delete_comment(
     if document is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Comment not found")
 
-    is_author = (
-        principal.user_id is not None and comment.author_user_id == principal.user_id
+    # Still allowed near this document at all? Revoked/expired guests aren't.
+    granted = await resolve_access(document, principal, db)
+    if granted == Access.NONE:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comment not found")
+
+    if principal.kind == "guest":
+        is_author = (
+            principal.guest_session_id is not None
+            and comment.guest_session_id == principal.guest_session_id
+        )
+    else:
+        is_author = (
+            principal.user_id is not None
+            and comment.author_user_id == principal.user_id
+        )
+    is_document_owner = (
+        principal.user_id is not None and principal.user_id == document.owner_id
     )
-    is_document_owner = principal.user_id == document.owner_id
     if not (is_author or is_document_owner):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Comment not found")
 

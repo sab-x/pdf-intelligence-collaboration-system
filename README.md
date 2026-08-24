@@ -5,7 +5,7 @@ citations, and share it with anyone — no account required for them to read and
 
 **Live demo:** https://pdf-intelligence-collaboration-syst.vercel.app
 **API docs:** https://pdf-intel-api.onrender.com/docs
-**Video walkthrough:** [ADD LOOM LINK]
+**Video walkthrough:** https://www.loom.com/share/03d2fa86303a4af8b1001aa92d52be40
 
 > ⚠️ The API runs on Render's free tier and sleeps when idle. **The first request after a
 > quiet period takes ~50 seconds** while the instance wakes. Everything after that is fast.

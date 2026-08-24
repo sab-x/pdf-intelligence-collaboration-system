@@ -50,7 +50,7 @@ const BENEFITS = [
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex min-h-dvh bg-reader">
+    <div className="relative flex min-h-dvh overflow-y-auto bg-reader">
       {/* Paper grid across the WHOLE page, so both halves share a texture
           and the split reads as one surface rather than two. */}
       <div
@@ -79,20 +79,20 @@ export function AuthLayout({ children }: { children: ReactNode }) {
       />
 
       {/* ---- Left: what it does ---------------------------------------- */}
-      <aside className="relative hidden w-[52%] shrink-0 flex-col justify-center px-10 py-12 lg:flex xl:px-16">
+      <aside className="relative hidden w-[52%] shrink-0 flex-col justify-center px-10 py-8 lg:flex xl:px-16">
         <span className="font-display text-xl tracking-tight text-white/90">
           PDF Intelligence
         </span>
 
-        <h1 className="mt-6 max-w-[16ch] font-display text-[2.75rem] leading-[1.05] tracking-tight text-white xl:text-[3.25rem]">
+        <h1 className="mt-5 max-w-[16ch] font-display text-[2.5rem] leading-[1.05] tracking-tight text-white xl:text-[3rem]">
           Read less. Know more.
         </h1>
-        <p className="mt-4 max-w-[42ch] text-[0.9375rem] leading-relaxed text-white/55">
+        <p className="mt-3 max-w-[42ch] text-[0.9375rem] leading-relaxed text-white/55">
           Upload a document and it&rsquo;s summarised, indexed and ready to answer
           questions — with every claim tied to the page it came from.
         </p>
 
-        <ul className="mt-9 grid max-w-[34rem] gap-x-8 gap-y-5 sm:grid-cols-2">
+        <ul className="mt-7 grid max-w-[34rem] gap-x-8 gap-y-4 sm:grid-cols-2">
           {BENEFITS.map(({ icon: Icon, title, body }) => (
             <li key={title} className="flex gap-3">
               <span
@@ -110,7 +110,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         </ul>
 
         {/* The specimen. One, not three — it's evidence, not a gallery. */}
-        <figure className="mt-10 max-w-[34rem] rounded-xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-sm">
+        <figure className="mt-7 max-w-[34rem] rounded-xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-sm">
           <figcaption className="flex items-center gap-2 text-white/35">
             <Sparkles className="size-3.5" aria-hidden />
             <span className="font-mono text-[0.625rem] uppercase tracking-[0.12em]">
@@ -139,7 +139,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* ---- Right: the form ------------------------------------------- */}
-      <main className="relative flex flex-1 items-center justify-center px-5 py-12">
+      <main className="relative flex flex-1 items-center justify-center px-5 py-8">
         <div className="w-full max-w-sm">
           {/* Only below lg, where the left column is gone and the page would
               otherwise open on an unlabelled card. */}

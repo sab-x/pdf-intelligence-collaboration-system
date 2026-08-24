@@ -90,49 +90,26 @@ export function DocumentPanel({
   return (
     <>
       {/* --- >= 1280px: stacked, no tabs ------------------------------- */}
-      <aside className="hidden h-full min-h-0 flex-col gap-4 xl:flex">
-        {/* Comments gets 1 share, chat gets 2. An even split looked balanced
-            and read badly: comments is usually a short list or empty, while
-            chat is a growing transcript that has to be scrolled in a ~200px
-            window. Space should follow how much content each actually holds. */}
-        <section className="flex min-h-[11rem] flex-[1] flex-col overflow-hidden rounded-xl border border-border bg-card">
-          <header className="flex items-center gap-2 border-b border-border px-5 py-3.5">
-            <MessagesSquare className="size-4 text-muted-foreground" aria-hidden />
-            <h2 className="meta">Comments</h2>
-          </header>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <CommentsPanel
-              documentId={documentId}
-              pageNumber={pageNumber}
-              onJumpToPage={onJumpToPage}
-              canComment={canComment}
-              guestDisplayName={guestDisplayName}
-            />
-          </div>
-        </section>
+      {/* --- >= 768px: tabbed --------------------------------------------
 
-        <section className="flex min-h-[20rem] flex-[2] flex-col overflow-hidden rounded-xl border border-border bg-card">
-          <header className="flex items-center gap-2 border-b border-border px-5 py-3.5">
-            <Sparkles className="size-4 text-muted-foreground" aria-hidden />
-            <h2 className="meta">Chat</h2>
-          </header>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <ChatPanel
-              documentId={documentId}
-              onJumpToPage={onJumpToPage}
-              pageCount={pageCount}
-            />
-          </div>
-        </section>
-      </aside>
+          This replaces a stacked layout that showed comments and chat at
+          the same time above 1280px. The idea was sound and the arithmetic
+          was not: the panel column is about 700px tall on a normal laptop,
+          so two stacked panels get ~350px each — and each one needs ~250px
+          for its header and its pinned composer before a single line of
+          content appears. Both were permanently cramped, and no split of a
+          fixed budget fixes that.
 
-      {/* --- 768-1279px: tabbed ---------------------------------------- */}
-      <aside className="hidden h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card md:flex xl:hidden">
+          Tabs give whichever panel you are using the full column height.
+          The cost is honest: you see one at a time. That is a better trade
+          than two panels that are both too small to use.
+      ------------------------------------------------------------------ */}
+      <aside className="hidden h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card md:flex">
         <TabBar active={tab} onChange={setTab} />
         <div
           id={`panel-${tab}`}
           role="tabpanel"
-          className="min-h-0 flex-1 overflow-auto"
+          className="min-h-0 flex-1 overflow-hidden"
         >
           {tab === "comments" ? (
             <CommentsPanel
@@ -207,7 +184,7 @@ export function MobilePanelSheet({
         </div>
 
         <TabBar active={tab} onChange={setTab} className="mt-2" />
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-hidden">
           {tab === "comments" ? (
             <CommentsPanel
               documentId={documentId}

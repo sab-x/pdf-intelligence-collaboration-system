@@ -180,7 +180,7 @@ export function CommentsPanel({
             </p>
           </div>
         ) : tree.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-8 py-12 text-center">
+          <div className="flex h-full min-h-[8rem] flex-col items-center justify-center gap-3 px-6 py-6 text-center">
             <span className="grid size-11 place-items-center rounded-xl bg-secondary text-muted-foreground">
               <MessagesSquare className="size-5" aria-hidden />
             </span>
@@ -215,8 +215,12 @@ export function CommentsPanel({
         )}
       </div>
 
+      {/* shrink-0 on both branches below: without it the composer is a flex
+          child its siblings can compress, and the Comment button ends up
+          clipped below the card edge — unreachable, which reads to a user as
+          "comments are broken" rather than as a layout bug. */}
       {canComment ? (
-        <div className="border-t border-border p-4">
+        <div className="shrink-0 border-t border-border p-3">
           <CommentComposer
             pageNumber={pageNumber}
             isSubmitting={post.isPending && replyingTo === null}
@@ -229,7 +233,7 @@ export function CommentsPanel({
           />
         </div>
       ) : (
-        <div className="border-t border-border px-4 py-3">
+        <div className="shrink-0 border-t border-border px-4 py-3">
           <p className="text-xs text-muted-foreground">
             You have view-only access to this document.
           </p>

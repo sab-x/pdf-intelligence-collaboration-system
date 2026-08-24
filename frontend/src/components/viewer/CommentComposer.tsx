@@ -130,7 +130,7 @@ export function CommentComposer({
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        rows={3}
+        rows={2}
         className={cn(
           "w-full resize-y bg-transparent px-3.5 py-3 text-sm leading-relaxed",
           "placeholder:text-muted-foreground focus:outline-none",

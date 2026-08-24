@@ -78,8 +78,8 @@ export function SummaryAbstract({ document }: { document: DocumentSummary }) {
               // Editorial size only once you've chosen to read it. Collapsed
               // it's a 3-line lede at a size that doesn't dominate the page.
               expanded
-                ? "text-[1.3125rem] leading-[1.5]"
-                : "line-clamp-3 text-[1.0625rem] leading-[1.5]",
+                ? "text-[1.4375rem] leading-[1.55]"
+                : "line-clamp-3 text-[1.1875rem] leading-[1.55]",
             )}
           >
             {document.summary}

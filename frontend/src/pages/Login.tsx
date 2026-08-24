@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import { AuthLayout } from "@/components/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -67,10 +68,13 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm">
+    <AuthLayout>
+      <p className="meta mb-3 text-white/40">Sign in</p>
+      <Card className="w-full border-white/10 shadow-2xl shadow-black/40 ring-1 ring-white/10">
         <CardHeader>
-          <CardTitle>Log in</CardTitle>
+          <CardTitle className="font-display text-3xl font-normal tracking-tight">
+            Log in
+          </CardTitle>
           <CardDescription>Welcome back. Enter your details to continue.</CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit} noValidate>
@@ -118,6 +122,6 @@ export default function LoginPage() {
           </CardFooter>
         </form>
       </Card>
-    </div>
+    </AuthLayout>
   );
 }

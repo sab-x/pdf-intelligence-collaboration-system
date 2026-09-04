@@ -30,6 +30,11 @@ export default function LoginPage() {
   // Set by ProtectedRoute when it turned someone away; falls back to the
   // dashboard for a plain visit to /login.
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/";
+  // Set by ResetPasswordPage's navigate() after a successful reset. Read
+  // once on mount only — history.replace already dropped this state on
+  // any subsequent navigation, so there's no stale-banner risk from
+  // re-reading it.
+  const resetSuccess = Boolean((location.state as { resetSuccess?: boolean } | null)?.resetSuccess);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -79,6 +84,11 @@ export default function LoginPage() {
         </CardHeader>
         <form onSubmit={handleSubmit} noValidate>
           <CardContent className="space-y-4">
+            {resetSuccess && !apiError && (
+              <p className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80">
+                Your password has been reset. Please log in again.
+              </p>
+            )}
             {apiError && (
               <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                 {apiError}
@@ -97,7 +107,15 @@ export default function LoginPage() {
               {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  to="/forgot-password"
+                  className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"

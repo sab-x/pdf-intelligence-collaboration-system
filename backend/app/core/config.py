@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_DAYS: int = 7
     GUEST_TOKEN_HOURS: int = 24
     BCRYPT_ROUNDS: int = 12
+    # How long a password-reset link stays valid. Short window on purpose —
+    # unlike a refresh token this is emailed/logged in plaintext, so a
+    # narrower blast radius matters more than convenience.
+    RESET_TOKEN_MINUTES: int = 30
 
     # ---------- Google Gemini ----------
     GEMINI_API_KEY: str

@@ -16,6 +16,10 @@ interface TokenResponse {
   user: AuthUser;
 }
 
+interface MessageResponse {
+  message: string;
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   isLoading: boolean;
@@ -23,6 +27,8 @@ interface AuthContextValue {
   signup: (name: string, email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  forgotPassword: (email: string) => Promise<string>;
+  resetPassword: (token: string, password: string) => Promise<string>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -98,8 +104,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Both intentionally do NOT touch `user`/setAccessToken — a reset link
+  // logs every session out server-side (see the backend route), but the
+  // tab that just submitted the new password has no access token to clear
+  // in the first place; it lands back on /login same as any signed-out
+  // visitor.
+  async function forgotPassword(email: string): Promise<string> {
+    const data = await api.post<MessageResponse>(
+      "/auth/forgot-password",
+      { email },
+      { skipAuthRetry: true },
+    );
+    return data.message;
+  }
+
+  async function resetPassword(token: string, password: string): Promise<string> {
+    const data = await api.post<MessageResponse>(
+      "/auth/reset-password",
+      { token, password },
+      { skipAuthRetry: true },
+    );
+    return data.message;
+  }
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isLoading, isAuthenticated: user !== null, signup, login, logout }),
+    () => ({
+      user,
+      isLoading,
+      isAuthenticated: user !== null,
+      signup,
+      login,
+      logout,
+      forgotPassword,
+      resetPassword,
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [user, isLoading],
   );

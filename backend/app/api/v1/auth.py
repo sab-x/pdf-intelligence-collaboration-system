@@ -6,6 +6,8 @@ The refresh token is an httpOnly + Secure + SameSite=Lax cookie scoped to
 revokes every still-active row for the user, so a captured token can't be
 replayed after logout — stateless refresh tokens would make that lie.
 """
+import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -23,23 +25,35 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
     hash_password,
+    hash_reset_token,
     verify_password,
 )
 from app.db.session import get_db
+from app.models.password_reset_token import PasswordResetToken
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.auth import (
     AccessTokenResponse,
+    ForgotPasswordRequest,
     LoginRequest,
+    MessageResponse,
+    ResetPasswordRequest,
     SignupRequest,
     TokenResponse,
     UserResponse,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
+RESET_TOKEN_BYTES = 32
+# Same generic copy for both branches of forgot-password — see the route
+# docstring for why this can never differ by whether the account exists.
+_FORGOT_PASSWORD_GENERIC_MESSAGE = (
+    "If an account exists for that email, a password reset link has been sent."
+)
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -205,3 +219,92 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 async def me(user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+@limiter.limit(settings.RATE_LIMIT_FORGOT_PASSWORD)
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Issue a reset link — never reveals whether the email has an account.
+
+    Same non-enumeration principle as require_document_access returning 404
+    for a stranger: an attacker probing this endpoint must not be able to
+    tell "no such account" apart from "email sent" by response shape,
+    status code, or timing category. Both branches return the identical
+    200 + generic message; the only difference is whether a row and a log
+    line get written, and neither is observable from the response.
+
+    Email delivery is out of scope for this project (same reason share-link
+    notifications are: no verified sending domain). The reset link is
+    logged instead, which is an honest stand-in for a dev/demo environment
+    — call this out explicitly if asked in review, don't pretend it emails.
+    """
+    user = await db.scalar(select(User).where(User.email == body.email))
+    if user is not None:
+        raw_token = secrets.token_urlsafe(RESET_TOKEN_BYTES)
+        row = PasswordResetToken(
+            user_id=user.id,
+            token_hash=hash_reset_token(raw_token),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.RESET_TOKEN_MINUTES),
+        )
+        db.add(row)
+        await db.commit()
+
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
+        logger.info("Password reset requested for user_id=%s. Reset link: %s", user.id, reset_link)
+
+    return MessageResponse(message=_FORGOT_PASSWORD_GENERIC_MESSAGE)
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+@limiter.limit(settings.RATE_LIMIT_FORGOT_PASSWORD)
+async def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Consume a reset token: set the new password, then log out everywhere.
+
+    The token itself (not the email) is the credential here, so there's no
+    enumeration concern in returning a specific "invalid or expired" error
+    — a bare secrets.token_urlsafe(32) is not guessable, so a 400 here only
+    ever means the link was already used, expired, or mistyped.
+
+    Revoking every refresh_tokens row for this user on success mirrors what
+    /auth/logout does, and matters more here: if the reset was triggered
+    because the account was compromised, a session an attacker is already
+    holding must not survive the password change.
+    """
+    token_hash = hash_reset_token(body.token)
+    row = await db.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )
+    if (
+        row is None
+        or row.used_at is not None
+        or row.expires_at < datetime.now(timezone.utc)
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This reset link is invalid or has expired.")
+
+    try:
+        password_hash = hash_password(body.password)
+    except PasswordTooLongError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    user = await db.get(User, row.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This reset link is invalid or has expired.")
+
+    user.password_hash = password_hash
+    row.used_at = datetime.now(timezone.utc)
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
+
+    return MessageResponse(message="Your password has been reset. Please log in again.")

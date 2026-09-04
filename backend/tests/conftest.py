@@ -45,6 +45,7 @@ from app.models import (  # noqa: E402,F401
     document,
     document_chunk,
     guest_session,
+    password_reset_token,
     refresh_token,
     share_link,
     user,
@@ -76,7 +77,7 @@ async def _clean_tables() -> AsyncIterator[None]:
             text(
                 "TRUNCATE TABLE chat_messages, chat_sessions, document_chunks, "
                 "comments, guest_sessions, share_links, refresh_tokens, "
-                "users, documents CASCADE"
+                "password_reset_tokens, users, documents CASCADE"
             )
         )
 

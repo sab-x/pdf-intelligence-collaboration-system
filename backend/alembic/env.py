@@ -19,6 +19,7 @@ from app.models import (  # noqa: F401
     document,
     document_chunk,
     guest_session,
+    password_reset_token,
     refresh_token,
     share_link,
     user,

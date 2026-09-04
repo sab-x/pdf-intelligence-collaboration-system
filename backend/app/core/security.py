@@ -16,6 +16,7 @@ presented to a user-only route would verify and be treated as a user. The
 kind check is the only thing standing between those two, so nothing in this
 module should ever be made lenient about it.
 """
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -140,3 +141,19 @@ def decode_token(token: str, *, expected_kind: TokenKind) -> dict:
     if payload.get("kind") != expected_kind:
         raise TokenError(f"expected a {expected_kind} token")
     return payload
+
+
+def hash_reset_token(raw_token: str) -> str:
+    """Hash a password-reset token for storage — PROJECT_PLAN-style follow-up.
+
+    Plain SHA-256, deliberately not bcrypt. bcrypt's slowness exists to
+    defend a low-entropy, human-chosen secret (a password) against offline
+    brute force. A reset token is `secrets.token_urlsafe(32)` — 256 bits of
+    randomness, the same primitive share_links uses for its token — and
+    brute-forcing that is infeasible regardless of hash speed. A fast hash
+    is correct here: it still means a database leak alone doesn't hand out
+    usable reset tokens (nothing is stored in reversible or directly-usable
+    form), without imposing bcrypt's per-hash cost on a value that gains
+    nothing from it.
+    """
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MessagesSquare, Sparkles, X } from "lucide-react";
 
-import { ChatPanel } from "@/components/viewer/ChatPanel";
+import { ChatPanel, type PendingExcerpt } from "@/components/viewer/ChatPanel";
 import { CommentsPanel } from "@/components/viewer/CommentsPanel";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,9 @@ interface PanelContentProps {
   canComment?: boolean;
   /** Set on the share page so a guest's optimistic comment shows their name. */
   guestDisplayName?: string;
+  /** A highlight from the PDF the reader just asked the AI about. */
+  pendingExcerpt?: PendingExcerpt | null;
+  onConsumeExcerpt?: () => void;
 }
 
 /** Icon-led tab bar — the icon carries the identity, the label confirms it. */
@@ -84,8 +87,16 @@ export function DocumentPanel({
   onJumpToPage,
   canComment = true,
   guestDisplayName,
+  pendingExcerpt,
+  onConsumeExcerpt,
 }: PanelContentProps) {
   const [tab, setTab] = useState<PanelTab>("comments");
+
+  // A highlight was just sent here from the PDF — jump to Chat so the
+  // reader isn't left wondering why nothing happened on Comments.
+  useEffect(() => {
+    if (pendingExcerpt) setTab("chat");
+  }, [pendingExcerpt]);
 
   return (
     <>
@@ -124,6 +135,8 @@ export function DocumentPanel({
               documentId={documentId}
               onJumpToPage={onJumpToPage}
               pageCount={pageCount}
+              pendingExcerpt={pendingExcerpt}
+              onConsumeExcerpt={onConsumeExcerpt}
             />
           )}
         </div>
@@ -142,8 +155,14 @@ export function MobilePanelSheet({
   onJumpToPage,
   canComment = true,
   guestDisplayName,
+  pendingExcerpt,
+  onConsumeExcerpt,
 }: PanelContentProps & { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<PanelTab>("comments");
+
+  useEffect(() => {
+    if (pendingExcerpt) setTab("chat");
+  }, [pendingExcerpt]);
 
   return (
     <div
@@ -198,6 +217,8 @@ export function MobilePanelSheet({
               documentId={documentId}
               onJumpToPage={onJumpToPage}
               pageCount={pageCount}
+              pendingExcerpt={pendingExcerpt}
+              onConsumeExcerpt={onConsumeExcerpt}
             />
           )}
         </div>

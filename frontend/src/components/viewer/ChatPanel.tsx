@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, Loader2, Send, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronDown, Loader2, Send, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,11 @@ import {
 } from "@/lib/chat";
 import { cn } from "@/lib/utils";
 
+export interface PendingExcerpt {
+  text: string;
+  page: number;
+}
+
 interface Turn {
   id: string;
   role: "user" | "assistant";
@@ -17,12 +22,18 @@ interface Turn {
   citations: Citation[] | null;
   /** Still receiving tokens — drives the caret and disables the composer. */
   streaming?: boolean;
+  /** Set only on a user turn that was asked from a PDF highlight. */
+  excerpt?: PendingExcerpt | null;
 }
 
 interface ChatPanelProps {
   documentId: string;
   onJumpToPage: (page: number) => void;
   pageCount: number;
+  /** A highlight the reader just asked to send here, from PdfViewer. */
+  pendingExcerpt?: PendingExcerpt | null;
+  /** Called once the excerpt has been attached to a question (or dismissed). */
+  onConsumeExcerpt?: () => void;
 }
 
 const SUGGESTIONS = [
@@ -127,7 +138,13 @@ function GroundedIn({
   );
 }
 
-export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProps) {
+export function ChatPanel({
+  documentId,
+  onJumpToPage,
+  pageCount,
+  pendingExcerpt,
+  onConsumeExcerpt,
+}: ChatPanelProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -136,6 +153,7 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Follow the answer as it streams. Fires on every token, which is the
   // point — the reader should not have to chase the text down the panel.
@@ -148,9 +166,20 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
   // request would keep burning a Gemini call nobody will read.
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // A highlight just landed here from the PDF — put the cursor where the
+  // question goes, since that's the only thing left for the reader to type.
+  useEffect(() => {
+    if (pendingExcerpt) textareaRef.current?.focus();
+  }, [pendingExcerpt]);
+
   async function ask(question: string): Promise<void> {
     const trimmed = question.trim();
     if (!trimmed || busy) return;
+
+    const excerpt = pendingExcerpt ?? null;
+    // Spent as soon as it's attached to a question, so it can't silently
+    // ride along with a second, unrelated one.
+    onConsumeExcerpt?.();
 
     setError(null);
     setBusy(true);
@@ -159,7 +188,13 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
     const answerId = `a-${crypto.randomUUID()}`;
     setTurns((current) => [
       ...current,
-      { id: `q-${crypto.randomUUID()}`, role: "user", content: trimmed, citations: null },
+      {
+        id: `q-${crypto.randomUUID()}`,
+        role: "user",
+        content: trimmed,
+        citations: null,
+        excerpt,
+      },
       { id: answerId, role: "assistant", content: "", citations: null, streaming: true },
     ]);
 
@@ -189,7 +224,14 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
       },
     };
 
-    await streamChat(documentId, trimmed, sessionId, handlers, controller.signal);
+    // The excerpt is folded straight into the message text sent to the
+    // existing grounded chat endpoint — no new route, no new AI code. It
+    // just becomes part of what the model is asked to answer from.
+    const outgoing = excerpt
+      ? `Regarding this excerpt from page ${excerpt.page}:\n"${excerpt.text}"\n\n${trimmed}`
+      : trimmed;
+
+    await streamChat(documentId, outgoing, sessionId, handlers, controller.signal);
     setBusy(false);
     abortRef.current = null;
   }
@@ -230,7 +272,15 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
           <ul className="space-y-5">
             {turns.map((turn) =>
               turn.role === "user" ? (
-                <li key={turn.id} className="flex justify-end">
+                <li key={turn.id} className="flex flex-col items-end gap-1.5">
+                  {turn.excerpt && (
+                    <p className="max-w-[85%] truncate rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs italic text-muted-foreground">
+                      <span className="mr-1 shrink-0 font-mono not-italic text-primary">
+                        p. {turn.excerpt.page}
+                      </span>
+                      “{turn.excerpt.text}”
+                    </p>
+                  )}
                   <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-secondary px-3.5 py-2 text-sm leading-relaxed">
                     {turn.content}
                   </p>
@@ -281,8 +331,27 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
         }}
         className="shrink-0 border-t border-border p-4"
       >
+        {pendingExcerpt && (
+          <div className="mb-2.5 flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+            <p className="min-w-0 flex-1 text-xs italic leading-relaxed text-muted-foreground">
+              <span className="mr-1 shrink-0 font-mono not-italic text-primary">
+                p. {pendingExcerpt.page}
+              </span>
+              <span className="line-clamp-2">“{pendingExcerpt.text}”</span>
+            </p>
+            <button
+              type="button"
+              onClick={onConsumeExcerpt}
+              aria-label="Remove excerpt"
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <X className="size-3.5" aria-hidden />
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
@@ -296,7 +365,9 @@ export function ChatPanel({ documentId, onJumpToPage, pageCount }: ChatPanelProp
             rows={2}
             maxLength={2000}
             disabled={busy}
-            placeholder="Ask a question about this document…"
+            placeholder={
+              pendingExcerpt ? "Ask about this excerpt…" : "Ask a question about this document…"
+            }
             aria-label="Ask a question about this document"
             className="min-h-[2.75rem] flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
           />

@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { Document, Page } from "react-pdf";
-import { AlertTriangle, Maximize2, Minus, Plus } from "lucide-react";
+import { AlertTriangle, Maximize2, Minus, Plus, Sparkles } from "lucide-react";
 
 import { PageRail } from "@/components/viewer/PageRail";
 import { Button } from "@/components/ui/button";
@@ -33,10 +33,24 @@ interface PdfViewerProps {
   onPageCountChange?: (pageCount: number) => void;
   /** Reports the page currently in view, so the panel can anchor to it. */
   onPageChange?: (page: number) => void;
+  /**
+   * Fires only when the reader has an active, non-empty text selection
+   * inside the PDF and clicks the floating "Ask AI" bubble that appears
+   * next to it — never on a bare click, and never for a selection made
+   * anywhere outside this viewer (the chat or comments panel, say).
+   */
+  onAskSelection?: (text: string, page: number) => void;
+}
+
+interface SelectionBubble {
+  text: string;
+  page: number;
+  top: number;
+  left: number;
 }
 
 export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer(
-  { fileUrl, onPageCountChange, onPageChange },
+  { fileUrl, onPageCountChange, onPageChange, onAskSelection },
   ref,
 ) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,6 +62,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
   const [fitWidth, setFitWidth] = useState(true);
   const [containerWidth, setContainerWidth] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectionBubble, setSelectionBubble] = useState<SelectionBubble | null>(null);
 
   // react-pdf re-downloads the file whenever the `file` prop is a new object
   // identity, so the URL string is memoised into a stable object once.
@@ -102,6 +117,64 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
     pageRefs.current.slice(0, pageCount).forEach((node) => node && observer.observe(node));
     return () => observer.disconnect();
   }, [pageCount]);
+
+  // The "Ask AI" bubble: only ever set from a real, non-empty selection
+  // whose anchor lives inside this viewer's own scroll container. A click
+  // that collapses the selection, or a selection made in the chat/comments
+  // panel, clears it rather than showing anything.
+  useEffect(() => {
+    if (!onAskSelection) return;
+
+    function handleSelectionChange() {
+      const container = scrollRef.current;
+      const selection = window.getSelection();
+
+      if (!container || !selection || selection.isCollapsed || selection.rangeCount === 0) {
+        setSelectionBubble(null);
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      if (!container.contains(range.commonAncestorContainer)) {
+        setSelectionBubble(null);
+        return;
+      }
+
+      const text = selection.toString().trim();
+      if (!text) {
+        setSelectionBubble(null);
+        return;
+      }
+
+      const pageIndex = pageRefs.current.findIndex(
+        (node) => node?.contains(range.commonAncestorContainer) ?? false,
+      );
+      const rect = range.getBoundingClientRect();
+
+      setSelectionBubble({
+        // Capped well under ChatRequest's 2000-char limit — the excerpt
+        // still has to share room with the wrapper text and the question.
+        text: text.length > 800 ? `${text.slice(0, 800)}…` : text,
+        page: pageIndex >= 0 ? pageIndex + 1 : page,
+        top: rect.top - 40,
+        left: Math.min(Math.max(rect.left + rect.width / 2, 72), window.innerWidth - 72),
+      });
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, [onAskSelection, page]);
+
+  // The bubble's position is computed once, at selection time, in viewport
+  // coordinates — scrolling invalidates it, so drop it rather than let it
+  // drift away from the text it points at.
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || !selectionBubble) return;
+    const clear = () => setSelectionBubble(null);
+    container.addEventListener("scroll", clear, { passive: true });
+    return () => container.removeEventListener("scroll", clear);
+  }, [selectionBubble]);
 
   const scale = ZOOM_STEPS[zoomIndex];
   // 48px of breathing room either side of the page inside the reader panel.
@@ -226,6 +299,26 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
           </Document>
         )}
       </div>
+
+      {selectionBubble && onAskSelection && (
+        <button
+          type="button"
+          style={{ top: selectionBubble.top, left: selectionBubble.left }}
+          className="fixed z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background shadow-lg transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          // Selection collapses on mousedown before a click ever fires —
+          // suppressing that default is what keeps the text selected long
+          // enough for the click handler below to still read it.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onAskSelection(selectionBubble.text, selectionBubble.page);
+            window.getSelection()?.removeAllRanges();
+            setSelectionBubble(null);
+          }}
+        >
+          <Sparkles className="size-3.5" aria-hidden />
+          Ask AI
+        </button>
+      )}
     </div>
   );
 });

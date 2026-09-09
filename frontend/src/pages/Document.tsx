@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, PanelBottom, Share2 } from "lucide-react";
 
 import { ShareDialog } from "@/components/ShareDialog";
+import type { PendingExcerpt } from "@/components/viewer/ChatPanel";
 import { DocumentPanel, MobilePanelSheet } from "@/components/viewer/DocumentPanel";
 import { PdfViewer, type PdfViewerHandle } from "@/components/viewer/PdfViewer";
 import { SummaryAbstract } from "@/components/viewer/SummaryAbstract";
@@ -24,6 +25,17 @@ export default function DocumentPage() {
   const [pageCount, setPageCount] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // A highlight the reader selected in the PDF and asked the AI about —
+  // owns this at the page level because it has to reach both PdfViewer
+  // (where it's captured) and DocumentPanel/MobilePanelSheet (where it's
+  // spent), which are siblings.
+  const [pendingExcerpt, setPendingExcerpt] = useState<PendingExcerpt | null>(null);
+
+  function handleAskSelection(text: string, selectionPage: number) {
+    setPendingExcerpt({ text, page: selectionPage });
+    // No-op at >=768px; on a phone this is what actually surfaces Chat.
+    setSheetOpen(true);
+  }
 
   const document = useQuery({
     queryKey: [...documentKeys.all, "detail", id],
@@ -146,6 +158,7 @@ export default function DocumentPage() {
                   fileUrl={fileUrl.data.url}
                   onPageCountChange={setPageCount}
                   onPageChange={setPage}
+                  onAskSelection={handleAskSelection}
                 />
               ) : (
                 <div className="flex h-full min-h-[24rem] items-center justify-center rounded-xl bg-reader">
@@ -162,6 +175,8 @@ export default function DocumentPage() {
               pageNumber={page}
               pageCount={pageCount}
               onJumpToPage={jumpToPage}
+              pendingExcerpt={pendingExcerpt}
+              onConsumeExcerpt={() => setPendingExcerpt(null)}
             />
           </div>
         </div>
@@ -174,6 +189,8 @@ export default function DocumentPage() {
         pageNumber={page}
         pageCount={pageCount}
         onJumpToPage={jumpToPage}
+        pendingExcerpt={pendingExcerpt}
+        onConsumeExcerpt={() => setPendingExcerpt(null)}
       />
 
       <ShareDialog
